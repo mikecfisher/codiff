@@ -1,3 +1,4 @@
+import { useHotkey, useHotkeySequence } from '@tanstack/react-hotkeys';
 import {
   useCallback,
   useEffect,
@@ -9,7 +10,6 @@ import {
 import { CommandBar } from './app/components/CommandBar.tsx';
 import {
   CopyCommentsButton,
-  CodexUnavailablePanel,
   DiffSearchPanel,
   FirstRunPanel,
   PullRequestReviewButtons,
@@ -17,10 +17,12 @@ import {
   RepositoryLoadErrorPanel,
   ReviewSourceLoading,
 } from './app/components/Panels.tsx';
-import { ReviewCodeView } from './app/components/ReviewCodeView.tsx';
+import { ReviewCodeView, type ReviewCodeViewHandle } from './app/components/ReviewCodeView.tsx';
+import { ReviewGuideSidebar } from './app/components/ReviewGuideSidebar.tsx';
+import { ReviewSourcePicker } from './app/components/ReviewSourcePicker.tsx';
 import { Sidebar } from './app/components/Sidebar.tsx';
 import { defaultConfig } from './config/defaults.ts';
-import { getShortcutLabel, matchesShortcut } from './config/keymap.ts';
+import { getShortcutLabel, toRegisterableHotkey } from './config/keymap.ts';
 import type { CodiffConfig } from './config/types.ts';
 import {
   defaultCodexSkillStatus,
@@ -34,7 +36,6 @@ import {
   type DiffSearchResult,
   type RepositoryLoadError,
   type ReviewComment,
-  type SidebarMode,
   type SourceSession,
   type WalkthroughError,
 } from './lib/app-types.ts';
@@ -49,6 +50,7 @@ import {
   shouldLoadDiffSectionContents,
 } from './lib/diff.ts';
 import { compactPath, fuzzyMatches, sortFiles } from './lib/files.ts';
+import { getHistoryNavigationSources, getHistoryRows } from './lib/history.ts';
 import {
   consumeReloadSelection,
   getReloadDeltaPaths,
@@ -66,17 +68,15 @@ import {
   SIDEBAR_COLLAPSE_THRESHOLD,
   clampSidebarWidth,
   readSidebarCollapsed,
+  readReviewGuideWidth,
   readSidebarWidth,
+  writeReviewGuideWidth,
   writeSidebarCollapsed,
   writeSidebarWidth,
 } from './lib/sidebar-width.ts';
 import { getRepositoryLoadError, getShortRef, getSourceKey, getSourceLabel } from './lib/source.ts';
 import { readViewed, writeViewed } from './lib/viewed.ts';
-import {
-  emptyWalkthroughNotes,
-  getWalkthroughNotes,
-  orderFilesByWalkthrough,
-} from './lib/walkthrough.ts';
+import { getWalkthroughNotes, orderFilesByWalkthrough } from './lib/walkthrough.ts';
 import type {
   ChangedFile,
   CodexSkillStatus,
@@ -149,8 +149,10 @@ export default function App() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [loadingSectionIds, setLoadingSectionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>('tree');
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readSidebarWidth());
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const [reviewGuideOpen, setReviewGuideOpen] = useState(false);
+  const [reviewGuideWidth, setReviewGuideWidth] = useState<number>(() => readReviewGuideWidth());
   const [state, setState] = useState<RepositoryState | null>(null);
   const [terminalHelperInstalling, setTerminalHelperInstalling] = useState(false);
   const [terminalHelperStatus, setTerminalHelperStatus] = useState<TerminalHelperStatus>(
@@ -160,7 +162,6 @@ export default function App() {
   const [walkthrough, setWalkthrough] = useState<Walkthrough | null>(null);
   const [walkthroughError, setWalkthroughError] = useState<WalkthroughError | null>(null);
   const [walkthroughLoading, setWalkthroughLoading] = useState(false);
-  const [walkthroughUnread, setWalkthroughUnread] = useState(false);
   const historyRequestRef = useRef(0);
   const loadingSectionKeysRef = useRef<Set<string>>(new Set());
   const programmaticScrollPathRef = useRef<string | null>(null);
@@ -171,9 +172,10 @@ export default function App() {
   const preferencesRef = useRef<CodiffPreferences>(defaultPreferences);
   const reviewCommentsRef = useRef<ReadonlyArray<ReviewComment>>([]);
   const selectedPathRef = useRef<string | null>(null);
-  const sidebarModeRef = useRef<SidebarMode>('tree');
   const sourceRequestRef = useRef(0);
   const viewedRef = useRef<Record<string, string>>({});
+  const reviewCodeViewRef = useRef<ReviewCodeViewHandle>(null);
+  const sourcePickerVimCountRef = useRef('');
   const walkthroughRef = useRef<Walkthrough | null>(null);
   const walkthroughErrorRef = useRef<WalkthroughError | null>(null);
   const [commandBarVisible, setCommandBarVisible] = useState(false);
@@ -369,9 +371,8 @@ export default function App() {
         ...nextLaunchOptions,
         walkthrough: shouldLoadWalkthrough,
       });
-      setSidebarMode(
-        shouldLoadWalkthrough ? 'walkthrough' : shouldStartInHistory ? 'history' : 'tree',
-      );
+      setReviewGuideOpen(shouldLoadWalkthrough);
+      setSourcePickerOpen(shouldStartInHistory);
       setWalkthroughLoading(shouldLoadWalkthrough);
 
       const walkthroughResult = shouldLoadWalkthrough
@@ -664,10 +665,6 @@ export default function App() {
   }, [state]);
 
   useEffect(() => {
-    sidebarModeRef.current = sidebarMode;
-  }, [sidebarMode]);
-
-  useEffect(() => {
     collapsedRef.current = collapsed;
   }, [collapsed]);
 
@@ -720,15 +717,7 @@ export default function App() {
     [reviewComments, showOutdated],
   );
   const walkthroughNotes = useMemo(() => getWalkthroughNotes(walkthrough), [walkthrough]);
-  const orderedFiles = useMemo(
-    () =>
-      state
-        ? sidebarMode === 'walkthrough'
-          ? orderFilesByWalkthrough(sortFiles(state.files), walkthrough)
-          : sortFiles(state.files)
-        : [],
-    [sidebarMode, state, walkthrough],
-  );
+  const orderedFiles = useMemo(() => (state ? sortFiles(state.files) : []), [state]);
   const fileFilteredFiles = useMemo(
     () =>
       state
@@ -767,6 +756,18 @@ export default function App() {
         : fileFilteredFiles,
     [diffSearchMatchPathSet, diffSearchQuery, fileFilteredFiles],
   );
+  const historyNavigationSources = useMemo(
+    () =>
+      getHistoryNavigationSources(
+        getHistoryRows({
+          branchSource: historySource?.type === 'branch' ? historySource : null,
+          entries: historyEntries,
+          pullRequestSource: historySource?.type === 'pull-request' ? historySource : null,
+          searchQuery: historySearchQuery,
+        }),
+      ),
+    [historyEntries, historySearchQuery, historySource],
+  );
 
   const effectiveActiveDiffSearchMatchIndex =
     diffSearchMatches.length === 0
@@ -798,40 +799,36 @@ export default function App() {
     writeSidebarCollapsed(false);
   }, []);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (matchesShortcut(event, codiffConfig.keymap, 'commandBar')) {
-        event.preventDefault();
-        setCommandBarVisible((current) => !current);
-        return;
-      }
-      if (matchesShortcut(event, codiffConfig.keymap, 'toggleSidebar')) {
-        event.preventDefault();
-        toggleSidebar();
-        return;
-      }
-      if (matchesShortcut(event, codiffConfig.keymap, 'diffSearch')) {
-        event.preventDefault();
-        openDiffSearch();
-        return;
-      }
-      if (matchesShortcut(event, codiffConfig.keymap, 'fileFilter')) {
-        if (sidebarCollapsed) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          expandSidebar();
-          requestAnimationFrame(() => {
-            const input = document.querySelector<HTMLInputElement>('.sidebar-search');
-            input?.focus();
-            input?.select();
-          });
-        }
-      }
-    };
+  useHotkey(
+    toRegisterableHotkey(codiffConfig.keymap.commandBar),
+    () => {
+      setCommandBarVisible((current) => !current);
+    },
+    { ignoreInputs: false },
+  );
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [codiffConfig.keymap, expandSidebar, openDiffSearch, sidebarCollapsed, toggleSidebar]);
+  useHotkey(toRegisterableHotkey(codiffConfig.keymap.toggleSidebar), toggleSidebar, {
+    ignoreInputs: true,
+  });
+  useHotkey(toRegisterableHotkey(codiffConfig.keymap.diffSearch), openDiffSearch, {
+    ignoreInputs: false,
+  });
+  useHotkey(
+    toRegisterableHotkey(codiffConfig.keymap.fileFilter),
+    () => {
+      if (!sidebarCollapsed) {
+        return;
+      }
+
+      expandSidebar();
+      requestAnimationFrame(() => {
+        const input = document.querySelector<HTMLInputElement>('.sidebar-search');
+        input?.focus();
+        input?.select();
+      });
+    },
+    { conflictBehavior: 'allow', ignoreInputs: true },
+  );
 
   useEffect(() => window.codiff.onFindInDiffs(openDiffSearch), [openDiffSearch]);
 
@@ -978,7 +975,6 @@ export default function App() {
           setWalkthrough(session?.walkthrough ?? null);
           setWalkthroughError(session?.walkthroughError ?? null);
           setWalkthroughLoading(false);
-          setWalkthroughUnread(false);
           setLocalChangesDetected(false);
           setPendingSource(null);
         })
@@ -991,6 +987,29 @@ export default function App() {
         });
     },
     [pendingSource, saveCurrentSourceSession],
+  );
+
+  const moveHistorySelection = useCallback(
+    (delta: number) => {
+      if (historyNavigationSources.length === 0) {
+        return;
+      }
+
+      const currentKey = getSourceKey(
+        pendingSource ?? stateRef.current?.source ?? historyNavigationSources[0],
+      );
+      const currentIndex = historyNavigationSources.findIndex(
+        (source) => getSourceKey(source) === currentKey,
+      );
+      const baseIndex =
+        currentIndex >= 0 ? currentIndex : delta > 0 ? -1 : historyNavigationSources.length;
+      const nextIndex = Math.max(
+        0,
+        Math.min(historyNavigationSources.length - 1, baseIndex + delta),
+      );
+      selectSource(historyNavigationSources[nextIndex]);
+    },
+    [historyNavigationSources, pendingSource, selectSource],
   );
 
   const resizeSidebar = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1049,21 +1068,63 @@ export default function App() {
     handle.addEventListener('pointercancel', handleEnd);
   }, []);
 
-  const changeSidebarMode = useCallback(
-    (mode: SidebarMode) => {
-      if (mode === 'tree') {
-        setSidebarMode('tree');
+  const resizeReviewGuide = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const handle = event.currentTarget;
+    const shell = handle.parentElement;
+    if (!shell) {
+      return;
+    }
+
+    const shellRight = shell.getBoundingClientRect().right;
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    let collapsed = false;
+
+    const cleanup = () => {
+      handle.releasePointerCapture(event.pointerId);
+      handle.removeEventListener('pointermove', handleMove);
+      handle.removeEventListener('pointerup', handleEnd);
+      handle.removeEventListener('pointercancel', handleEnd);
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+    };
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const rawWidth = shellRight - moveEvent.clientX;
+      if (rawWidth < SIDEBAR_COLLAPSE_THRESHOLD) {
+        collapsed = true;
+        setReviewGuideOpen(false);
+        cleanup();
         return;
       }
+      setReviewGuideWidth(clampSidebarWidth(rawWidth));
+    };
 
-      if (mode === 'history') {
-        setSidebarMode('history');
-        return;
+    const handleEnd = () => {
+      cleanup();
+      if (!collapsed) {
+        setReviewGuideWidth((width) => {
+          writeReviewGuideWidth(width);
+          return width;
+        });
       }
+    };
 
-      setSidebarMode('walkthrough');
-      setWalkthroughUnread(false);
-      if (walkthrough || walkthroughError || walkthroughLoading || !state) {
+    handle.addEventListener('pointermove', handleMove);
+    handle.addEventListener('pointerup', handleEnd);
+    handle.addEventListener('pointercancel', handleEnd);
+  }, []);
+
+  const loadWalkthrough = useCallback(
+    (options: { force?: boolean } = {}) => {
+      if (!state) {
         return;
       }
       if (state.files.length === 0) {
@@ -1072,10 +1133,16 @@ export default function App() {
         setWalkthroughLoading(false);
         return;
       }
+      if (!options.force && (walkthrough || walkthroughError || walkthroughLoading)) {
+        return;
+      }
 
       const sourceKey = getSourceKey(state.source);
       setWalkthroughLoading(true);
       setWalkthroughError(null);
+      if (options.force) {
+        setWalkthrough(null);
+      }
       window.codiff
         .getWalkthrough(state.source)
         .then((result) => {
@@ -1085,11 +1152,6 @@ export default function App() {
 
           if (result.status === 'ready') {
             setWalkthrough(result.walkthrough);
-            if (sidebarModeRef.current === 'walkthrough') {
-              setSidebarMode('walkthrough');
-            } else {
-              setWalkthroughUnread(true);
-            }
           } else {
             setWalkthroughError(result);
           }
@@ -1112,6 +1174,40 @@ export default function App() {
     },
     [state, walkthrough, walkthroughError, walkthroughLoading],
   );
+
+  const openReviewGuide = useCallback(() => {
+    setReviewGuideOpen(true);
+    loadWalkthrough();
+  }, [loadWalkthrough]);
+
+  const toggleReviewGuide = useCallback(() => {
+    setReviewGuideOpen((open) => {
+      const nextOpen = !open;
+      if (nextOpen) {
+        loadWalkthrough();
+      }
+      return nextOpen;
+    });
+  }, [loadWalkthrough]);
+
+  const openSourcePicker = useCallback(() => {
+    setSourcePickerOpen(true);
+  }, []);
+
+  const showFileTree = useCallback(() => {
+    expandSidebar();
+    setSourcePickerOpen(false);
+  }, [expandSidebar]);
+
+  useHotkey(toRegisterableHotkey(codiffConfig.keymap.treeTab), showFileTree, {
+    ignoreInputs: false,
+  });
+  useHotkey(toRegisterableHotkey(codiffConfig.keymap.historyTab), openSourcePicker, {
+    ignoreInputs: false,
+  });
+  useHotkey(toRegisterableHotkey(codiffConfig.keymap.walkthroughTab), toggleReviewGuide, {
+    ignoreInputs: false,
+  });
 
   useEffect(() => {
     const registry = commandRegistryRef.current;
@@ -1136,19 +1232,50 @@ export default function App() {
         title: 'Find in Diffs',
       }),
       registry.register({
-        execute: () => changeSidebarMode('tree'),
+        execute: () => {
+          reviewCodeViewRef.current?.moveLineCursor(1);
+        },
+        id: 'diff-cursor-down',
+        title: 'Move Diff Cursor Down',
+      }),
+      registry.register({
+        execute: () => {
+          reviewCodeViewRef.current?.moveLineCursor(-1);
+        },
+        id: 'diff-cursor-up',
+        title: 'Move Diff Cursor Up',
+      }),
+      registry.register({
+        execute: () => {
+          reviewCodeViewRef.current?.scrollHalfPage(1);
+        },
+        id: 'diff-scroll-half-page-down',
+        title: 'Scroll Diff Half Page Down',
+      }),
+      registry.register({
+        execute: () => {
+          reviewCodeViewRef.current?.scrollHalfPage(-1);
+        },
+        id: 'diff-scroll-half-page-up',
+        title: 'Scroll Diff Half Page Up',
+      }),
+      registry.register({
+        execute: showFileTree,
         id: 'sidebar-tree',
+        keymapAction: 'treeTab',
         title: 'Show File Tree',
       }),
       registry.register({
-        execute: () => changeSidebarMode('history'),
+        execute: openSourcePicker,
         id: 'sidebar-history',
+        keymapAction: 'historyTab',
         title: 'Show History',
       }),
       registry.register({
-        execute: () => changeSidebarMode('walkthrough'),
+        execute: openReviewGuide,
         id: 'sidebar-walkthrough',
-        title: 'Show Walkthrough',
+        keymapAction: 'walkthroughTab',
+        title: 'Show Review Guide',
       }),
       registry.register({
         execute: () => {
@@ -1299,9 +1426,11 @@ export default function App() {
     };
   }, [
     bumpItemVersion,
-    changeSidebarMode,
     expandSidebar,
     openDiffSearch,
+    openReviewGuide,
+    openSourcePicker,
+    showFileTree,
     reloadWindow,
     toggleSidebar,
   ]);
@@ -1413,6 +1542,134 @@ export default function App() {
     },
     [bumpItemVersion, state],
   );
+
+  const selectVisibleFile = useCallback(
+    (index: number) => {
+      const file = visibleFiles[index];
+      if (!file) {
+        return;
+      }
+
+      setSelectedPath(file.path);
+      scrollPathIntoReview(file.path);
+    },
+    [scrollPathIntoReview, visibleFiles],
+  );
+
+  const toggleSelectedViewed = useCallback(() => {
+    const path = selectedPathRef.current;
+    const file = visibleFiles.find((candidate) => candidate.path === path);
+    if (!file) {
+      return;
+    }
+
+    toggleViewed(file, viewedRef.current[file.path] === file.fingerprint);
+  }, [toggleViewed, visibleFiles]);
+
+  const consumeSourcePickerVimCount = useCallback(() => {
+    const value = Number.parseInt(sourcePickerVimCountRef.current || '1', 10);
+    sourcePickerVimCountRef.current = '';
+    return Number.isNaN(value) ? 1 : value;
+  }, []);
+
+  const recordSourcePickerVimCount = useCallback((event: KeyboardEvent) => {
+    const key = event.key;
+    if (!/^\d$/.test(key)) {
+      return;
+    }
+
+    if (key === '0' && sourcePickerVimCountRef.current.length === 0) {
+      return;
+    }
+
+    sourcePickerVimCountRef.current += key;
+  }, []);
+
+  const moveSourcePickerSelection = useCallback(
+    (delta: number) => {
+      moveHistorySelection(delta);
+    },
+    [moveHistorySelection],
+  );
+
+  useEffect(() => {
+    if (!sourcePickerOpen) {
+      sourcePickerVimCountRef.current = '';
+    }
+  }, [sourcePickerOpen]);
+
+  const vimEnabled = codiffConfig.settings.vimMode;
+  const vimAppHotkeyOptions = { enabled: vimEnabled && !sourcePickerOpen, ignoreInputs: true };
+  const vimGlobalHotkeyOptions = { enabled: vimEnabled, ignoreInputs: true };
+  const vimSequenceOptions = {
+    enabled: vimEnabled && !sourcePickerOpen,
+    ignoreInputs: true,
+    timeout: 800,
+  };
+  const vimSourcePickerHotkeyOptions = {
+    enabled: vimEnabled && sourcePickerOpen,
+    ignoreInputs: true,
+  };
+
+  useHotkey(toRegisterableHotkey('Tab'), () => {}, vimGlobalHotkeyOptions);
+  useHotkey(toRegisterableHotkey('Shift+Tab'), () => {}, vimGlobalHotkeyOptions);
+  useHotkey(toRegisterableHotkey('0'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('1'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('2'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('3'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('4'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('5'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('6'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('7'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('8'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(toRegisterableHotkey('9'), recordSourcePickerVimCount, vimSourcePickerHotkeyOptions);
+  useHotkey(
+    toRegisterableHotkey('J'),
+    () => moveSourcePickerSelection(consumeSourcePickerVimCount()),
+    vimSourcePickerHotkeyOptions,
+  );
+  useHotkey(
+    toRegisterableHotkey('K'),
+    () => moveSourcePickerSelection(-consumeSourcePickerVimCount()),
+    vimSourcePickerHotkeyOptions,
+  );
+  useHotkey(
+    toRegisterableHotkey('Shift+G'),
+    () => selectVisibleFile(visibleFiles.length - 1),
+    vimAppHotkeyOptions,
+  );
+  useHotkey(toRegisterableHotkey('/'), openDiffSearch, vimAppHotkeyOptions);
+  useHotkey(
+    toRegisterableHotkey('P'),
+    () => {
+      expandSidebar();
+      requestAnimationFrame(() => {
+        const input = document.querySelector<HTMLInputElement>('.sidebar-search');
+        input?.focus();
+        input?.select();
+      });
+    },
+    vimAppHotkeyOptions,
+  );
+  useHotkey(toRegisterableHotkey('B'), toggleSidebar, vimAppHotkeyOptions);
+  useHotkey(toRegisterableHotkey('V'), toggleSelectedViewed, vimAppHotkeyOptions);
+  useHotkey(
+    toRegisterableHotkey('W'),
+    () => {
+      void window.codiff.setWordWrap(!preferencesRef.current.wordWrap).catch(() => {});
+    },
+    vimAppHotkeyOptions,
+  );
+  useHotkey(
+    toRegisterableHotkey('Shift+;'),
+    () => {
+      setCommandBarVisible(true);
+    },
+    vimAppHotkeyOptions,
+  );
+  useHotkeySequence(['G', 'G'], () => selectVisibleFile(0), vimSequenceOptions);
+  useHotkeySequence([']', 'C'], () => moveDiffSearchMatch(1), vimSequenceOptions);
+  useHotkeySequence(['[', 'C'], () => moveDiffSearchMatch(-1), vimSequenceOptions);
 
   const createComment = useCallback((comment: Omit<ReviewComment, 'body' | 'id'>) => {
     const emptyExistingComment = reviewCommentsRef.current.find(
@@ -1738,24 +1995,22 @@ export default function App() {
   const hasDiffSearchQuery = diffSearchQuery.trim().length > 0;
   const isPullRequest = state.source.type === 'pull-request';
   const isSwitchingSource = pendingSource != null;
-  const showCodexUnavailablePanel =
-    sidebarMode === 'walkthrough' &&
-    !walkthrough &&
-    !walkthroughLoading &&
-    walkthroughError?.code === 'CODEX_NOT_FOUND';
-
+  const currentSource = pendingSource ?? state.source;
   const sidebarLabel = `${compactPath(state.root)}${state.branch ? ` (${state.branch})` : ''}`;
-  const sidebarSourceLabel =
-    state.source.type !== 'working-tree' ? ` · ${getSourceLabel(state.source)}` : '';
+  const sourceDisplayLabel = getSourceLabel(currentSource);
+  const reviewGuideGap = '2px';
+  const gridTemplateColumns = sidebarCollapsed
+    ? reviewGuideOpen
+      ? `minmax(0, 1fr) ${reviewGuideGap} ${reviewGuideWidth}px`
+      : undefined
+    : reviewGuideOpen
+      ? `${sidebarWidth}px 6px minmax(0, 1fr) ${reviewGuideGap} ${reviewGuideWidth}px`
+      : `${sidebarWidth}px 6px minmax(0, 1fr)`;
 
   return (
     <div
-      className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}
-      style={
-        sidebarCollapsed
-          ? undefined
-          : { gridTemplateColumns: `${sidebarWidth}px 6px minmax(0, 1fr)` }
-      }
+      className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}${reviewGuideOpen ? ' review-guide-open' : ''}`}
+      style={gridTemplateColumns ? { gridTemplateColumns } : undefined}
     >
       <div aria-hidden className="window-drag-region" />
       {sidebarCollapsed ? (
@@ -1782,8 +2037,7 @@ export default function App() {
             </svg>
           </button>
           <div className="collapsed-sidebar-label" title={state.root}>
-            {sidebarLabel}
-            {sidebarSourceLabel}
+            {sidebarLabel} · {sourceDisplayLabel}
           </div>
         </div>
       ) : null}
@@ -1810,7 +2064,10 @@ export default function App() {
         visible={commandBarVisible}
       />
       {!isSwitchingSource ? (
-        <div className="review-action-bar">
+        <div
+          className="review-action-bar"
+          style={reviewGuideOpen ? { right: reviewGuideWidth + 28 } : undefined}
+        >
           <CopyCommentsButton
             comments={reviewComments}
             files={orderedFiles}
@@ -1849,52 +2106,44 @@ export default function App() {
                 <line x1="9" x2="9" y1="3" y2="21" />
               </svg>
             </button>
-            <div className="sidebar-path" title={state.root}>
-              {sidebarLabel}
-              {sidebarSourceLabel}
-            </div>
+            <ReviewSourcePicker
+              branchSource={historySource?.type === 'branch' ? historySource : null}
+              currentSource={currentSource}
+              entries={historyEntries}
+              hasMore={historyHasMore}
+              loading={historyLoading}
+              onLoadMore={loadMoreHistory}
+              onOpenChange={setSourcePickerOpen}
+              onSearchQueryChange={setHistorySearchQuery}
+              onSelectSource={selectSource}
+              open={sourcePickerOpen}
+              pullRequestSource={historySource?.type === 'pull-request' ? historySource : null}
+              repositoryLabel={sidebarLabel}
+              searchQuery={historySearchQuery}
+              sourceLabel={sourceDisplayLabel}
+            />
           </div>
         </div>
         <Sidebar
-          branchSource={historySource?.type === 'branch' ? historySource : null}
-          currentSource={pendingSource ?? state.source}
           files={visibleFiles}
-          historyEntries={historyEntries}
-          historyHasMore={historyHasMore}
-          historyLoading={historyLoading}
           keymap={codiffConfig.keymap}
-          mode={sidebarMode}
           onActivatePath={activatePath}
-          onLoadMoreHistory={loadMoreHistory}
-          onModeChange={changeSidebarMode}
-          onSearchQueryChange={
-            sidebarMode === 'history' ? setHistorySearchQuery : setFileSearchQuery
-          }
+          onSearchQueryChange={setFileSearchQuery}
           onSelectPath={selectPath}
-          onSelectSource={selectSource}
-          pullRequestSource={historySource?.type === 'pull-request' ? historySource : null}
           reloadDeltaPaths={reloadDeltaPaths}
-          searchQuery={sidebarMode === 'history' ? historySearchQuery : fileSearchQuery}
+          searchQuery={fileSearchQuery}
           selectedPath={visibleSelectedPath}
           showWhitespace={showWhitespace}
-          walkthroughAvailable={walkthrough != null}
-          walkthroughError={walkthroughError}
-          walkthroughLoading={walkthroughLoading}
-          walkthroughNotes={walkthroughNotes}
-          walkthroughSummary={walkthrough?.summary ?? null}
-          walkthroughUnread={walkthroughUnread}
         />
       </aside>
-      <div aria-hidden className="sidebar-resizer" onPointerDown={resizeSidebar} />
+      <div
+        aria-hidden
+        className="sidebar-resizer left-sidebar-resizer"
+        onPointerDown={resizeSidebar}
+      />
       <main className="review">
         {isSwitchingSource ? (
           <ReviewSourceLoading />
-        ) : showCodexUnavailablePanel ? (
-          <div className="empty-state">
-            <div className="empty-panel squircle">
-              <CodexUnavailablePanel onShowFiles={() => setSidebarMode('tree')} />
-            </div>
-          </div>
         ) : state.files.length === 0 ? (
           <div className="empty-state">
             <div className="empty-panel squircle">
@@ -1947,24 +2196,46 @@ export default function App() {
             onDeleteComment={deleteComment}
             onLoadSection={loadDiffSection}
             onOpenFile={openFile}
+            onSelectPath={selectPath}
             onSelectPathFromScroll={updateSelectedPathFromScroll}
             onSubmitComment={submitPullRequestComment}
             onToggleCollapsed={toggleCollapsed}
             onToggleViewed={toggleViewed}
             onUpdateComment={updateComment}
+            ref={reviewCodeViewRef}
             scrollTarget={scrollTarget}
             searchQuery={diffSearchQuery}
             selectedPath={visibleSelectedPath}
             showWhitespace={showWhitespace}
             source={state.source}
             viewed={viewed}
-            walkthroughNotes={
-              sidebarMode === 'walkthrough' ? walkthroughNotes : emptyWalkthroughNotes
-            }
+            vimEnabled={vimEnabled && !sourcePickerOpen}
+            walkthroughNotes={walkthroughNotes}
             wordWrap={wordWrap}
           />
         )}
       </main>
+      {reviewGuideOpen ? (
+        <>
+          <div
+            aria-hidden
+            className="sidebar-resizer review-guide-resizer"
+            onPointerDown={resizeReviewGuide}
+          />
+          <ReviewGuideSidebar
+            files={visibleFiles}
+            onActivatePath={activatePath}
+            onClose={() => setReviewGuideOpen(false)}
+            onGenerateWalkthrough={loadWalkthrough}
+            selectedPath={visibleSelectedPath}
+            showWhitespace={showWhitespace}
+            walkthrough={walkthrough}
+            walkthroughError={walkthroughError}
+            walkthroughLoading={walkthroughLoading}
+            walkthroughNotes={walkthroughNotes}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

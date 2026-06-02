@@ -2,15 +2,10 @@ import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/CaretDown';
 import { CaretUpIcon as CaretUp } from '@phosphor-icons/react/CaretUp';
 import { CheckIcon as Check } from '@phosphor-icons/react/Check';
 import { XIcon as X } from '@phosphor-icons/react/X';
+import { useHotkey } from '@tanstack/react-hotkeys';
 import { Copy as LucideCopy } from 'lucide-react';
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from 'react';
-import { matchesShortcut } from '../../config/keymap.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { toRegisterableHotkey } from '../../config/keymap.ts';
 import type { CodiffKeymap } from '../../config/types.ts';
 import type { RepositoryLoadError, ReviewComment } from '../../lib/app-types.ts';
 import { getReloadShortcutLabel } from '../../lib/keyboard.ts';
@@ -189,27 +184,18 @@ export function DiffSearchPanel({
     });
   }, [focusRequest, visible]);
 
-  const handleKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLInputElement>) => {
-      if (matchesShortcut(event, keymap, 'closeSearch')) {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-
-      if (matchesShortcut(event, keymap, 'prevSearchMatch')) {
-        event.preventDefault();
-        onPrevious();
-        return;
-      }
-
-      if (matchesShortcut(event, keymap, 'nextSearchMatch')) {
-        event.preventDefault();
-        onNext();
-      }
-    },
-    [keymap, onClose, onNext, onPrevious],
-  );
+  useHotkey(toRegisterableHotkey(keymap.closeSearch), onClose, {
+    ignoreInputs: false,
+    target: inputRef,
+  });
+  useHotkey(toRegisterableHotkey(keymap.prevSearchMatch), onPrevious, {
+    ignoreInputs: false,
+    target: inputRef,
+  });
+  useHotkey(toRegisterableHotkey(keymap.nextSearchMatch), onNext, {
+    ignoreInputs: false,
+    target: inputRef,
+  });
 
   return (
     <div className={`diff-search-panel${visible ? ' visible' : ''}`}>
@@ -217,7 +203,6 @@ export function DiffSearchPanel({
         aria-label="Search diffs"
         className="diff-search-input"
         onChange={(event) => onChange(event.currentTarget.value)}
-        onKeyDown={handleKeyDown}
         placeholder="Find in diffs"
         ref={inputRef}
         spellCheck={false}

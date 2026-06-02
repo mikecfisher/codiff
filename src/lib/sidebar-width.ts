@@ -1,5 +1,6 @@
 const SIDEBAR_WIDTH_STORAGE_KEY = 'codiff:sidebar-width';
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codiff:sidebar-collapsed';
+const REVIEW_GUIDE_WIDTH_STORAGE_KEY = 'codiff:review-guide-width';
 
 export const SIDEBAR_COLLAPSE_THRESHOLD = 80;
 export const SIDEBAR_DEFAULT_WIDTH = 292;
@@ -23,6 +24,23 @@ export const readSidebarWidth = (storage: SidebarWidthStorage = localStorage): n
 
 export const writeSidebarWidth = (width: number, storage: SidebarWidthStorage = localStorage) => {
   storage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(width)));
+};
+
+export const readReviewGuideWidth = (storage: SidebarWidthStorage = localStorage): number => {
+  const raw = storage.getItem(REVIEW_GUIDE_WIDTH_STORAGE_KEY);
+  if (!raw) {
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? clampSidebarWidth(parsed) : SIDEBAR_DEFAULT_WIDTH;
+};
+
+export const writeReviewGuideWidth = (
+  width: number,
+  storage: SidebarWidthStorage = localStorage,
+) => {
+  storage.setItem(REVIEW_GUIDE_WIDTH_STORAGE_KEY, String(clampSidebarWidth(width)));
 };
 
 export const readSidebarCollapsed = (storage: SidebarWidthStorage = localStorage): boolean =>

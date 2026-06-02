@@ -38,6 +38,7 @@
     "test": "vp test"
   },
   "dependencies": {
+    "@tanstack/react-hotkeys": "^0.10.0",
     "electron-squirrel-startup": "^1.0.1"
   },
   "devDependencies": {

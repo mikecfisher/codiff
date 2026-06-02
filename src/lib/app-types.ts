@@ -83,8 +83,6 @@ export type ReviewComment = {
   url?: string;
 };
 
-export type SidebarMode = 'tree' | 'walkthrough' | 'history';
-
 export type PullRequestSource = Extract<ReviewSource, { type: 'pull-request' }>;
 
 export type WalkthroughNote = {

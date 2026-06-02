@@ -10,25 +10,30 @@ import {
   type CodeViewOptions,
   type DiffLineAnnotation,
   type LineAnnotation,
+  type SelectionSide,
 } from '@pierre/diffs';
 import { CodeView, type CodeViewHandle, WorkerPoolContextProvider } from '@pierre/diffs/react';
+import { useHotkey } from '@tanstack/react-hotkeys';
 import { Copy as LucideCopy } from 'lucide-react';
 import {
   Fragment,
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type ForwardedRef,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type SyntheticEvent,
 } from 'react';
 import codexIconUrl from '../../assets/codex.svg';
-import { matchesShortcut } from '../../config/keymap.ts';
+import { matchesShortcut, toRegisterableHotkey } from '../../config/keymap.ts';
 import type { CodiffDiffStyle, CodiffKeymap } from '../../config/types.ts';
 import type {
   CodeViewInstance,
@@ -782,39 +787,13 @@ function isScrollTargetRendered(viewer: CodeViewInstance, itemId: string) {
   return viewer.getRenderedItems().some((item) => item.id === itemId);
 }
 
-export function ReviewCodeView({
-  activeSearchMatch,
-  collapsed,
-  comments,
-  diffStyle,
-  files,
-  focusCommentId,
-  focusCommentRequest,
-  forceExpandedPaths,
-  gitIdentity,
-  isPullRequest,
-  itemVersionByPath,
-  keymap,
-  loadingSectionIds,
-  onAskCodex,
-  onCreateComment,
-  onDeleteComment,
-  onLoadSection,
-  onOpenFile,
-  onSelectPathFromScroll,
-  onSubmitComment,
-  onToggleCollapsed,
-  onToggleViewed,
-  onUpdateComment,
-  scrollTarget,
-  searchQuery,
-  selectedPath,
-  showWhitespace,
-  source,
-  viewed,
-  walkthroughNotes,
-  wordWrap,
-}: {
+export type ReviewCodeViewHandle = {
+  clearLineCursor: () => void;
+  moveLineCursor: (delta: number) => boolean;
+  scrollHalfPage: (direction: 1 | -1, count?: number) => boolean;
+};
+
+type ReviewCodeViewProps = {
   activeSearchMatch: DiffSearchMatch | null;
   collapsed: ReadonlySet<string>;
   comments: ReadonlyArray<ReviewComment>;
@@ -833,6 +812,7 @@ export function ReviewCodeView({
   onDeleteComment: (commentId: string) => void;
   onLoadSection: (file: ChangedFile, section: DiffSection) => void;
   onOpenFile: (file: ChangedFile) => void;
+  onSelectPath: (path: string) => void;
   onSelectPathFromScroll: (viewer: CodeViewInstance) => void;
   onSubmitComment: (commentId: string) => void;
   onToggleCollapsed: (file: ChangedFile, isCollapsed: boolean) => void;
@@ -844,9 +824,56 @@ export function ReviewCodeView({
   showWhitespace: boolean;
   source: ReviewSource;
   viewed: Record<string, string>;
+  vimEnabled: boolean;
   walkthroughNotes: ReadonlyMap<string, WalkthroughNote>;
   wordWrap: boolean;
-}) {
+};
+
+type VimLineAnchor = {
+  itemId: string;
+  lineNumber: number;
+  path: string;
+  side: SelectionSide;
+};
+
+function ReviewCodeViewInner(
+  {
+    activeSearchMatch,
+    collapsed,
+    comments,
+    diffStyle,
+    files,
+    focusCommentId,
+    focusCommentRequest,
+    forceExpandedPaths,
+    gitIdentity,
+    isPullRequest,
+    itemVersionByPath,
+    keymap,
+    loadingSectionIds,
+    onAskCodex,
+    onCreateComment,
+    onDeleteComment,
+    onLoadSection,
+    onOpenFile,
+    onSelectPath,
+    onSelectPathFromScroll,
+    onSubmitComment,
+    onToggleCollapsed,
+    onToggleViewed,
+    onUpdateComment,
+    scrollTarget,
+    searchQuery,
+    selectedPath,
+    showWhitespace,
+    source,
+    viewed,
+    vimEnabled,
+    walkthroughNotes,
+    wordWrap,
+  }: ReviewCodeViewProps,
+  ref: ForwardedRef<ReviewCodeViewHandle>,
+) {
   const codeViewRef = useRef<CodeViewHandle<ReviewAnnotationMetadata>>(null);
   const deferredTimersRef = useRef<Set<number>>(new Set());
   const handledScrollRequestRef = useRef<number | null>(null);
@@ -865,7 +892,9 @@ export function ReviewCodeView({
     Readonly<Record<string, number>>
   >({});
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
+  const selectedLinesRef = useRef<CodeViewLineSelection | null>(null);
   const stickyHeaderFrameRef = useRef<number | null>(null);
+  const vimCountRef = useRef('');
   const commentsBySection = useMemo(() => {
     const map = new Map<string, Array<ReviewComment>>();
     for (const comment of comments) {
@@ -875,6 +904,10 @@ export function ReviewCodeView({
     }
     return map;
   }, [comments]);
+
+  useEffect(() => {
+    selectedLinesRef.current = selectedLines;
+  }, [selectedLines]);
 
   const markMarkdownPreviewLayoutReady = useCallback((sectionId: string) => {
     setMarkdownPreviewLayoutPassBySection((current) => ({
@@ -1058,10 +1091,214 @@ export function ReviewCodeView({
     walkthroughNotes,
   ]);
 
+  const vimLineAnchors = useMemo(() => {
+    const anchors: Array<VimLineAnchor> = [];
+
+    for (const item of items) {
+      if (item.type !== 'diff') {
+        continue;
+      }
+
+      const metadata = itemMetadata.get(item.id);
+      if (!metadata || metadata.isCollapsed) {
+        continue;
+      }
+
+      for (const hunk of item.fileDiff.hunks) {
+        for (const content of hunk.hunkContent) {
+          const additionStart =
+            hunk.additionStart + content.additionLineIndex - hunk.additionLineIndex;
+          const deletionStart =
+            hunk.deletionStart + content.deletionLineIndex - hunk.deletionLineIndex;
+
+          if (content.type === 'context') {
+            for (let index = 0; index < content.lines; index += 1) {
+              anchors.push({
+                itemId: item.id,
+                lineNumber: additionStart + index,
+                path: metadata.file.path,
+                side: 'additions',
+              });
+            }
+            continue;
+          }
+
+          if (diffStyle === 'split') {
+            const rowCount = Math.max(content.additions, content.deletions);
+            for (let index = 0; index < rowCount; index += 1) {
+              anchors.push({
+                itemId: item.id,
+                lineNumber:
+                  index < content.additions ? additionStart + index : deletionStart + index,
+                path: metadata.file.path,
+                side: index < content.additions ? 'additions' : 'deletions',
+              });
+            }
+            continue;
+          }
+
+          for (let index = 0; index < content.deletions; index += 1) {
+            anchors.push({
+              itemId: item.id,
+              lineNumber: deletionStart + index,
+              path: metadata.file.path,
+              side: 'deletions',
+            });
+          }
+          for (let index = 0; index < content.additions; index += 1) {
+            anchors.push({
+              itemId: item.id,
+              lineNumber: additionStart + index,
+              path: metadata.file.path,
+              side: 'additions',
+            });
+          }
+        }
+      }
+    }
+
+    return anchors;
+  }, [diffStyle, itemMetadata, items]);
+
   const clearCommentLineHighlight = useCallback(() => {
     codeViewRef.current?.clearSelectedLines();
     setSelectedLines(null);
   }, []);
+
+  const getCurrentVimLineIndex = useCallback(() => {
+    const selection = selectedLinesRef.current;
+    if (selection) {
+      const index = vimLineAnchors.findIndex(
+        (anchor) =>
+          anchor.itemId === selection.id &&
+          anchor.lineNumber === selection.range.start &&
+          anchor.lineNumber === selection.range.end &&
+          anchor.side === (selection.range.side ?? selection.range.endSide ?? 'additions'),
+      );
+      if (index >= 0) {
+        return index;
+      }
+    }
+
+    if (selectedPath) {
+      const index = vimLineAnchors.findIndex((anchor) => anchor.path === selectedPath);
+      if (index >= 0) {
+        return index;
+      }
+    }
+
+    return vimLineAnchors.length > 0 ? 0 : -1;
+  }, [selectedPath, vimLineAnchors]);
+
+  const moveLineCursor = useCallback(
+    (delta: number) => {
+      if (vimLineAnchors.length === 0) {
+        return false;
+      }
+
+      const currentIndex = getCurrentVimLineIndex();
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex = Math.max(0, Math.min(vimLineAnchors.length - 1, baseIndex + delta));
+      const anchor = vimLineAnchors[nextIndex];
+      if (!anchor) {
+        return false;
+      }
+
+      const selection = {
+        id: anchor.itemId,
+        range: {
+          end: anchor.lineNumber,
+          endSide: anchor.side,
+          side: anchor.side,
+          start: anchor.lineNumber,
+        },
+      } satisfies CodeViewLineSelection;
+
+      selectedLinesRef.current = selection;
+      setSelectedLines(selection);
+      onSelectPath(anchor.path);
+      codeViewRef.current?.scrollTo({
+        align: 'nearest',
+        behavior: 'smooth',
+        id: anchor.itemId,
+        lineNumber: anchor.lineNumber,
+        offset: DEFAULT_PADDING,
+        side: anchor.side,
+        type: 'line',
+      });
+      return true;
+    },
+    [getCurrentVimLineIndex, onSelectPath, vimLineAnchors],
+  );
+
+  const scrollHalfPage = useCallback((direction: 1 | -1, count = 1) => {
+    const viewer = codeViewRef.current?.getInstance();
+    if (!viewer) {
+      return false;
+    }
+
+    const element = viewer.getContainerElement();
+    if (!element) {
+      return false;
+    }
+
+    const halfPage = Math.max((viewer.getHeight() || element.clientHeight) / 2, 1);
+    element.scrollBy({ behavior: 'smooth', top: direction * halfPage * count });
+    return true;
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      clearLineCursor: clearCommentLineHighlight,
+      moveLineCursor,
+      scrollHalfPage,
+    }),
+    [clearCommentLineHighlight, moveLineCursor, scrollHalfPage],
+  );
+
+  const consumeVimCount = useCallback(() => {
+    const value = Number.parseInt(vimCountRef.current || '1', 10);
+    vimCountRef.current = '';
+    return Number.isNaN(value) ? 1 : value;
+  }, []);
+
+  const recordVimCount = useCallback((event: KeyboardEvent) => {
+    const key = event.key;
+    if (!/^\d$/.test(key)) {
+      return;
+    }
+
+    if (key === '0' && vimCountRef.current.length === 0) {
+      return;
+    }
+
+    vimCountRef.current += key;
+  }, []);
+
+  const vimHotkeyOptions = { enabled: vimEnabled, ignoreInputs: true };
+  useHotkey(toRegisterableHotkey('0'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('1'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('2'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('3'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('4'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('5'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('6'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('7'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('8'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('9'), recordVimCount, vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('J'), () => moveLineCursor(consumeVimCount()), vimHotkeyOptions);
+  useHotkey(toRegisterableHotkey('K'), () => moveLineCursor(-consumeVimCount()), vimHotkeyOptions);
+  useHotkey(
+    toRegisterableHotkey('Control+D'),
+    () => scrollHalfPage(1, consumeVimCount()),
+    vimHotkeyOptions,
+  );
+  useHotkey(
+    toRegisterableHotkey('Control+U'),
+    () => scrollHalfPage(-1, consumeVimCount()),
+    vimHotkeyOptions,
+  );
 
   const deferCommentLineHighlightClear = useCallback(() => {
     const timer = window.setTimeout(() => {
@@ -1564,3 +1801,5 @@ export function ReviewCodeView({
     </WorkerPoolContextProvider>
   );
 }
+
+export const ReviewCodeView = forwardRef(ReviewCodeViewInner);

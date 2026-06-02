@@ -1,16 +1,11 @@
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/CaretDown';
 import type { FileTreeRowDecorationRenderer } from '@pierre/trees';
 import { FileTree, useFileTree } from '@pierre/trees/react';
+import { useHotkey } from '@tanstack/react-hotkeys';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { matchesShortcut } from '../../config/keymap.ts';
+import { toRegisterableHotkey } from '../../config/keymap.ts';
 import type { CodiffKeymap } from '../../config/types.ts';
-import type {
-  DiffLineCount,
-  PullRequestSource,
-  SidebarMode,
-  WalkthroughError,
-  WalkthroughNote,
-} from '../../lib/app-types.ts';
+import type { DiffLineCount, PullRequestSource, WalkthroughNote } from '../../lib/app-types.ts';
 import {
   formatLineCountNumber,
   formatTreeLineCount,
@@ -19,7 +14,7 @@ import {
   getTotalDiffLineCount,
 } from '../../lib/diff.ts';
 import { fileTreeSort, statusForTree } from '../../lib/files.ts';
-import { isNativeInputTarget } from '../../lib/keyboard.ts';
+import { getHistoryRows } from '../../lib/history.ts';
 import { renderInlineMarkdown } from '../../lib/markdown.tsx';
 import { getShortRef, getSourceKey } from '../../lib/source.ts';
 import { walkthroughActionLabel, walkthroughImpactLabel } from '../../lib/walkthrough.ts';
@@ -27,57 +22,25 @@ import type { ChangedFile, HistoryEntry, ReviewSource, Walkthrough } from '../..
 import { Gravatar } from './Gravatar.tsx';
 
 export function Sidebar({
-  branchSource,
-  currentSource,
   files,
-  historyEntries,
-  historyHasMore,
-  historyLoading,
   keymap,
-  mode,
   onActivatePath,
-  onLoadMoreHistory,
-  onModeChange,
   onSearchQueryChange,
   onSelectPath,
-  onSelectSource,
-  pullRequestSource,
   reloadDeltaPaths,
   searchQuery,
   selectedPath,
   showWhitespace,
-  walkthroughAvailable,
-  walkthroughError,
-  walkthroughLoading,
-  walkthroughNotes,
-  walkthroughSummary,
-  walkthroughUnread,
 }: {
-  branchSource: Extract<ReviewSource, { type: 'branch' }> | null;
-  currentSource: ReviewSource;
   files: ReadonlyArray<ChangedFile>;
-  historyEntries: ReadonlyArray<HistoryEntry>;
-  historyHasMore: boolean;
-  historyLoading: boolean;
   keymap: CodiffKeymap;
-  mode: SidebarMode;
   onActivatePath: (path: string) => void;
-  onLoadMoreHistory: () => void;
-  onModeChange: (mode: SidebarMode) => void;
   onSearchQueryChange: (query: string) => void;
   onSelectPath: (path: string) => void;
-  onSelectSource: (source: ReviewSource) => void;
-  pullRequestSource: PullRequestSource | null;
   reloadDeltaPaths: ReadonlySet<string>;
   searchQuery: string;
   selectedPath: string | null;
   showWhitespace: boolean;
-  walkthroughAvailable: boolean;
-  walkthroughError: WalkthroughError | null;
-  walkthroughLoading: boolean;
-  walkthroughNotes: ReadonlyMap<string, WalkthroughNote>;
-  walkthroughSummary: Walkthrough['summary'] | null;
-  walkthroughUnread: boolean;
 }) {
   const allowSelectionScroll = useRef(false);
   const allowSelectionScrollTimer = useRef<number | null>(null);
@@ -94,7 +57,7 @@ export function Sidebar({
     () => getTotalDiffLineCount(lineCountsByPath.values()),
     [lineCountsByPath],
   );
-  const showTotalLineCount = mode !== 'history' && totalLineCount.countable;
+  const showTotalLineCount = totalLineCount.countable;
   const lineCountsByPathRef = useRef(lineCountsByPath);
   const reloadDeltaGitStatusCSS = useMemo(
     () => getReloadDeltaGitStatusCSS(reloadDeltaPaths),
@@ -234,18 +197,14 @@ export function Sidebar({
     [],
   );
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isNativeInputTarget(event.target) && matchesShortcut(event, keymap, 'fileFilter')) {
-        event.preventDefault();
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [keymap]);
+  useHotkey(
+    toRegisterableHotkey(keymap.fileFilter),
+    () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    },
+    { conflictBehavior: 'allow', ignoreInputs: true },
+  );
 
   useEffect(() => {
     if (!selectedPath) {
@@ -275,81 +234,16 @@ export function Sidebar({
           aria-label="Filter changed files"
           className="sidebar-search"
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
-          placeholder={mode === 'history' ? 'Filter history' : 'Filter files'}
+          placeholder="Filter files"
           ref={searchInputRef}
           spellCheck={false}
           type="search"
           value={searchQuery}
         />
       </div>
-      <div aria-label="Review order" className="sidebar-mode-toggle" role="tablist">
-        <button
-          aria-selected={mode === 'tree'}
-          onClick={() => onModeChange('tree')}
-          role="tab"
-          type="button"
-        >
-          Tree
-        </button>
-        <button
-          aria-selected={mode === 'walkthrough'}
-          onClick={() => onModeChange('walkthrough')}
-          role="tab"
-          type="button"
-        >
-          <span>Walkthrough</span>
-          {walkthroughUnread ? <span aria-hidden className="sidebar-tab-dot" /> : null}
-        </button>
-        <button
-          aria-selected={mode === 'history'}
-          onClick={() => onModeChange('history')}
-          role="tab"
-          type="button"
-        >
-          History
-        </button>
+      <div className="file-tree-shell" ref={treeHostRef}>
+        <FileTree className="file-tree" model={model} onClick={handleTreeClick} />
       </div>
-      {mode === 'history' ? (
-        <HistorySidebar
-          branchSource={branchSource}
-          currentSource={currentSource}
-          entries={historyEntries}
-          hasMore={historyHasMore}
-          loading={historyLoading}
-          onLoadMore={onLoadMoreHistory}
-          onSelectSource={onSelectSource}
-          pullRequestSource={pullRequestSource}
-          searchQuery={searchQuery}
-        />
-      ) : mode === 'walkthrough' && walkthroughAvailable ? (
-        <WalkthroughSidebar
-          files={files}
-          onActivatePath={onActivatePath}
-          selectedPath={selectedPath}
-          showWhitespace={showWhitespace}
-          walkthroughNotes={walkthroughNotes}
-          walkthroughSummary={walkthroughSummary}
-        />
-      ) : mode === 'walkthrough' ? (
-        <>
-          {walkthroughLoading ? (
-            <div className="sidebar-walkthrough-status-shell">
-              <div className="sidebar-walkthrough-status codex">
-                <strong>Generating walkthrough…</strong>
-              </div>
-            </div>
-          ) : walkthroughError ? (
-            <div className="sidebar-walkthrough-status" title={walkthroughError.reason}>
-              <strong>Walkthrough unavailable</strong>
-              <span>{walkthroughError.reason}</span>
-            </div>
-          ) : null}
-        </>
-      ) : (
-        <div className="file-tree-shell" ref={treeHostRef}>
-          <FileTree className="file-tree" model={model} onClick={handleTreeClick} />
-        </div>
-      )}
       {showTotalLineCount ? (
         <div className="sidebar-total-row">
           <span>Total</span>
@@ -432,7 +326,7 @@ const shortDate = (timestamp: number) => {
   return `${Math.floor(months / 12)}y ago`;
 };
 
-function HistorySidebar({
+export function HistorySidebar({
   branchSource,
   currentSource,
   entries,
@@ -456,91 +350,10 @@ function HistorySidebar({
   const currentSourceKey = getSourceKey(currentSource);
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const listRef = useRef<HTMLDivElement>(null);
-  const rows = useMemo(() => {
-    const commitRows = entries.map((entry) => ({
-      author: entry.author,
-      committedAt: entry.committedAt,
-      gravatarUrl: entry.gravatarUrl,
-      key: `commit:${entry.ref}`,
-      kind: 'entry' as const,
-      ref: entry.ref,
-      scope: entry.scope,
-      source: { ref: entry.ref, type: 'commit' } satisfies ReviewSource,
-      subject: entry.subject,
-    }));
-    const matchesQuery = (row: (typeof commitRows)[number]) =>
-      !normalizedQuery ||
-      row.subject.toLowerCase().includes(normalizedQuery) ||
-      row.ref.toLowerCase().includes(normalizedQuery);
-
-    if (pullRequestSource) {
-      const hasScopedRows = commitRows.some((row) => row.scope != null);
-      const pullRequestRows = commitRows
-        .filter((row) => (hasScopedRows ? row.scope === 'pull-request' : row.scope == null))
-        .filter(matchesQuery);
-      const baseRows = hasScopedRows
-        ? commitRows.filter((row) => row.scope === 'base').filter(matchesQuery)
-        : [];
-      return [
-        !normalizedQuery
-          ? {
-              author: null,
-              committedAt: null,
-              gravatarUrl: undefined,
-              key: getSourceKey(pullRequestSource),
-              kind: 'entry' as const,
-              ref: pullRequestSource.number ? `PR #${pullRequestSource.number}` : 'PR',
-              source: pullRequestSource satisfies ReviewSource,
-              subject: pullRequestSource.title || 'Pull Request',
-            }
-          : null,
-        {
-          key: 'history-section:pull-request',
-          kind: 'section' as const,
-          label: hasScopedRows ? 'Pull request commits' : 'Branch history',
-        },
-        ...pullRequestRows,
-        { key: 'history-section:base', kind: 'section' as const, label: 'Base history' },
-        ...baseRows,
-      ].filter((row): row is NonNullable<typeof row> => row != null);
-    }
-
-    if (branchSource) {
-      const localRows = commitRows.filter(matchesQuery);
-      return [
-        !normalizedQuery
-          ? {
-              author: null,
-              committedAt: null,
-              gravatarUrl: undefined,
-              key: getSourceKey(branchSource),
-              kind: 'entry' as const,
-              ref: branchSource.ref,
-              source: branchSource satisfies ReviewSource,
-              subject: 'Branch history',
-            }
-          : null,
-        ...localRows,
-      ].filter((row): row is NonNullable<typeof row> => row != null);
-    }
-
-    const localRows = commitRows.filter(matchesQuery);
-    return [
-      !normalizedQuery
-        ? {
-            author: null,
-            committedAt: null,
-            gravatarUrl: undefined,
-            key: 'working-tree',
-            kind: 'entry' as const,
-            ref: '',
-            source: { type: 'working-tree' } satisfies ReviewSource,
-            subject: 'Uncommitted',
-          }
-        : null,
-      ...localRows,
-    ].filter((row): row is NonNullable<typeof row> => row != null);
-  }, [branchSource, entries, normalizedQuery, pullRequestSource]);
+  const rows = useMemo(
+    () => getHistoryRows({ branchSource, entries, pullRequestSource, searchQuery }),
+    [branchSource, entries, pullRequestSource, searchQuery],
+  );
   const maybeLoadMore = useCallback(() => {
     const element = listRef.current;
     if (!element || loading || !hasMore || normalizedQuery) {
@@ -551,6 +364,17 @@ function HistorySidebar({
       onLoadMore();
     }
   }, [hasMore, loading, normalizedQuery, onLoadMore]);
+
+  useEffect(() => {
+    const selectedRow = listRef.current?.querySelector<HTMLElement>('.history-entry.selected');
+    if (typeof selectedRow?.scrollIntoView !== 'function') {
+      return;
+    }
+
+    selectedRow.scrollIntoView({
+      block: 'nearest',
+    });
+  }, [currentSourceKey, rows]);
 
   return (
     <div className="history-list" onScroll={maybeLoadMore} ref={listRef}>
@@ -602,7 +426,7 @@ function HistorySidebar({
   );
 }
 
-function WalkthroughSidebar({
+export function WalkthroughSidebar({
   files,
   onActivatePath,
   selectedPath,
