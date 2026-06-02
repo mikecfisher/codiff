@@ -107,7 +107,7 @@ is running so changes apply to open windows.
     "discardComment": "Escape",
     "toggleSidebar": "Mod+b",
     "treeTab": "Mod+1",
-    "walkthroughTab": "Mod+2",
+    "walkthroughTab": "Mod+l",
   },
 }
 ```
@@ -116,8 +116,8 @@ Choose `View > Split Diff` or `View > Unified Diff`, use Toggle Diff Layout in t
 or set `settings.diffStyle` to `split` for side-by-side diffs or `unified` for unified diffs.
 Choose `View > Word Wrap`, use Toggle Word Wrap in the command bar, or set `settings.wordWrap`
 to `true` to wrap long diff lines. Set `settings.vimMode` to `true` to enable Vim-style
-review navigation, including `j`/`k` for line movement, <kbd>Ctrl</kbd>+<kbd>D</kbd>/<kbd>Ctrl</kbd>+<kbd>U</kbd> for half-page scrolling, `gg`/`G` for first/last file, `/` for diff
-search, `p` for file filter, `b` for sidebar, `v` for viewed, `w` for word wrap, and `:` for the
+review navigation, including `j`/`k` for line movement, <kbd>Ctrl</kbd>+<kbd>D</kbd>/<kbd>Ctrl</kbd>+<kbd>U</kbd> for half-page scrolling that advances the selected line, <kbd>Enter</kbd> to open the inline Codex prompt for the selected line, `gg`/`G` for first/last file, `/` for diff
+search, <kbd>Cmd</kbd>+<kbd>L</kbd> to toggle the Review Guide sidebar, `p` for file filter, `b` for sidebar, `v` for viewed, `w` for word wrap, and `:` for the
 command bar. Vim mode also disables <kbd>Tab</kbd>/<kbd>Shift</kbd>+<kbd>Tab</kbd> focus navigation
 outside text inputs so review navigation stays shortcut-driven.
 Use `Mod` for <kbd>Cmd</kbd> on macOS and <kbd>Ctrl</kbd> on other platforms. Shortcut strings can

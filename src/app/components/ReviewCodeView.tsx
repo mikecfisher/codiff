@@ -836,6 +836,10 @@ type VimLineAnchor = {
   side: SelectionSide;
 };
 
+const VIM_SCROLL_LINE_HEIGHT = 20;
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
 function ReviewCodeViewInner(
   {
     activeSearchMatch,
@@ -895,6 +899,10 @@ function ReviewCodeViewInner(
   const selectedLinesRef = useRef<CodeViewLineSelection | null>(null);
   const stickyHeaderFrameRef = useRef<number | null>(null);
   const vimCountRef = useRef('');
+  const updateSelectedLines = useCallback((selection: CodeViewLineSelection | null) => {
+    selectedLinesRef.current = selection;
+    setSelectedLines(selection);
+  }, []);
   const commentsBySection = useMemo(() => {
     const map = new Map<string, Array<ReviewComment>>();
     for (const comment of comments) {
@@ -1162,8 +1170,47 @@ function ReviewCodeViewInner(
 
   const clearCommentLineHighlight = useCallback(() => {
     codeViewRef.current?.clearSelectedLines();
-    setSelectedLines(null);
-  }, []);
+    updateSelectedLines(null);
+  }, [updateSelectedLines]);
+
+  const selectVimLineAnchor = useCallback(
+    (
+      anchor: VimLineAnchor,
+      options: {
+        align?: 'center' | 'end' | 'nearest' | 'start';
+        behavior?: 'instant' | 'smooth' | 'smooth-auto';
+        scroll?: boolean;
+      } = {},
+    ) => {
+      const selection = {
+        id: anchor.itemId,
+        range: {
+          end: anchor.lineNumber,
+          endSide: anchor.side,
+          side: anchor.side,
+          start: anchor.lineNumber,
+        },
+      } satisfies CodeViewLineSelection;
+
+      updateSelectedLines(selection);
+      onSelectPath(anchor.path);
+
+      if (options.scroll !== false) {
+        codeViewRef.current?.scrollTo({
+          align: options.align ?? 'nearest',
+          behavior: options.behavior ?? 'smooth',
+          id: anchor.itemId,
+          lineNumber: anchor.lineNumber,
+          offset: DEFAULT_PADDING,
+          side: anchor.side,
+          type: 'line',
+        });
+      }
+
+      return true;
+    },
+    [onSelectPath, updateSelectedLines],
+  );
 
   const getCurrentVimLineIndex = useCallback(() => {
     const selection = selectedLinesRef.current;
@@ -1198,54 +1245,97 @@ function ReviewCodeViewInner(
 
       const currentIndex = getCurrentVimLineIndex();
       const baseIndex = currentIndex >= 0 ? currentIndex : 0;
-      const nextIndex = Math.max(0, Math.min(vimLineAnchors.length - 1, baseIndex + delta));
+      const nextIndex = clamp(baseIndex + delta, 0, vimLineAnchors.length - 1);
+      const anchor = vimLineAnchors[nextIndex];
+      return anchor ? selectVimLineAnchor(anchor) : false;
+    },
+    [getCurrentVimLineIndex, selectVimLineAnchor, vimLineAnchors],
+  );
+
+  const getRenderedVimLineTop = useCallback((viewer: CodeViewInstance, anchor: VimLineAnchor) => {
+    const itemTop = viewer.getTopForItem(anchor.itemId);
+    if (itemTop == null) {
+      return null;
+    }
+
+    const renderedItem = viewer
+      .getRenderedItems()
+      .find((item) => item.type === 'diff' && item.id === anchor.itemId);
+    const linePosition = renderedItem?.instance.getLinePosition(anchor.lineNumber, anchor.side);
+    return linePosition ? itemTop + linePosition.top : null;
+  }, []);
+
+  const getNearestRenderedVimLineIndex = useCallback(
+    (viewer: CodeViewInstance, targetTop: number) => {
+      let nearestIndex = -1;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+
+      for (let index = 0; index < vimLineAnchors.length; index += 1) {
+        const lineTop = getRenderedVimLineTop(viewer, vimLineAnchors[index]);
+        if (lineTop == null) {
+          continue;
+        }
+
+        const distance = Math.abs(lineTop - targetTop);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = index;
+        }
+      }
+
+      return nearestIndex;
+    },
+    [getRenderedVimLineTop, vimLineAnchors],
+  );
+
+  const scrollHalfPage = useCallback(
+    (direction: 1 | -1, count = 1) => {
+      const handle = codeViewRef.current;
+      const viewer = handle?.getInstance();
+      if (!handle || !viewer || vimLineAnchors.length === 0) {
+        return false;
+      }
+
+      const currentIndex = getCurrentVimLineIndex();
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+      const scrollTop = viewer.getScrollTop();
+      const viewportHeight = Math.max(viewer.getHeight(), 1);
+      const delta = direction * (viewportHeight / 2) * count;
+      const maxScrollTop = Math.max(0, viewer.getScrollHeight() - viewportHeight);
+      const targetScrollTop = clamp(scrollTop + delta, 0, maxScrollTop);
+      const currentLineTop = getRenderedVimLineTop(viewer, vimLineAnchors[baseIndex]);
+      const viewportLineOffset =
+        currentLineTop == null
+          ? viewportHeight / 2
+          : clamp(currentLineTop - scrollTop, 0, Math.max(viewportHeight - 1, 0));
+      const nearestRenderedIndex = getNearestRenderedVimLineIndex(
+        viewer,
+        targetScrollTop + viewportLineOffset,
+      );
+      const estimatedLineDelta =
+        direction *
+        Math.max(1, Math.round(Math.abs(targetScrollTop - scrollTop) / VIM_SCROLL_LINE_HEIGHT));
+      const nextIndex =
+        nearestRenderedIndex >= 0
+          ? nearestRenderedIndex
+          : clamp(baseIndex + estimatedLineDelta, 0, vimLineAnchors.length - 1);
       const anchor = vimLineAnchors[nextIndex];
       if (!anchor) {
         return false;
       }
 
-      const selection = {
-        id: anchor.itemId,
-        range: {
-          end: anchor.lineNumber,
-          endSide: anchor.side,
-          side: anchor.side,
-          start: anchor.lineNumber,
-        },
-      } satisfies CodeViewLineSelection;
-
-      selectedLinesRef.current = selection;
-      setSelectedLines(selection);
-      onSelectPath(anchor.path);
-      codeViewRef.current?.scrollTo({
-        align: 'nearest',
-        behavior: 'smooth',
-        id: anchor.itemId,
-        lineNumber: anchor.lineNumber,
-        offset: DEFAULT_PADDING,
-        side: anchor.side,
-        type: 'line',
-      });
+      selectVimLineAnchor(anchor, { scroll: false });
+      handle.scrollTo({ behavior: 'smooth', position: targetScrollTop, type: 'position' });
       return true;
     },
-    [getCurrentVimLineIndex, onSelectPath, vimLineAnchors],
+    [
+      getCurrentVimLineIndex,
+      getNearestRenderedVimLineIndex,
+      getRenderedVimLineTop,
+      selectVimLineAnchor,
+      vimLineAnchors,
+    ],
   );
-
-  const scrollHalfPage = useCallback((direction: 1 | -1, count = 1) => {
-    const viewer = codeViewRef.current?.getInstance();
-    if (!viewer) {
-      return false;
-    }
-
-    const element = viewer.getContainerElement();
-    if (!element) {
-      return false;
-    }
-
-    const halfPage = Math.max((viewer.getHeight() || element.clientHeight) / 2, 1);
-    element.scrollBy({ behavior: 'smooth', top: direction * halfPage * count });
-    return true;
-  }, []);
 
   useImperativeHandle(
     ref,
@@ -1356,6 +1446,23 @@ function ReviewCodeViewInner(
       onCreateComment,
     ],
   );
+
+  const createCommentForSelectedLine = useCallback(() => {
+    const selection = selectedLinesRef.current;
+    if (!selection) {
+      return false;
+    }
+
+    const item = items.find((candidate) => candidate.id === selection.id);
+    if (!item || item.type !== 'diff') {
+      return false;
+    }
+
+    createCommentForRange(selection.range, { item });
+    return true;
+  }, [createCommentForRange, items]);
+
+  useHotkey(toRegisterableHotkey('Enter'), createCommentForSelectedLine, vimHotkeyOptions);
 
   const codeViewOptions: CodeViewOptions<ReviewAnnotationMetadata> = useMemo(
     () =>
@@ -1791,7 +1898,7 @@ function ReviewCodeViewInner(
         className="code-view"
         items={items}
         onScroll={handleScroll}
-        onSelectedLinesChange={setSelectedLines}
+        onSelectedLinesChange={updateSelectedLines}
         options={codeViewOptions}
         ref={codeViewRef}
         renderAnnotation={renderAnnotation}

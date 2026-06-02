@@ -24,7 +24,7 @@ export const defaultKeymap: CodiffKeymap = {
   submitComment: 'Mod+Enter',
   toggleSidebar: 'Mod+b',
   treeTab: 'Mod+1',
-  walkthroughTab: 'Mod+2',
+  walkthroughTab: 'Mod+l',
 };
 
 export const defaultConfig: CodiffConfig = {

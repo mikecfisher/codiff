@@ -49,8 +49,10 @@ const defaultKeymap = {
   submitComment: 'Mod+Enter',
   toggleSidebar: 'Mod+b',
   treeTab: 'Mod+1',
-  walkthroughTab: 'Mod+2',
+  walkthroughTab: 'Mod+l',
 };
+
+const oldDefaultWalkthroughTab = 'Mod+2';
 
 /** @type {CodiffConfig} */
 const defaultConfig = {
@@ -201,7 +203,8 @@ const mergeConfig = (raw) => {
           : defaultKeymap.toggleSidebar,
       treeTab: typeof rawKeymap.treeTab === 'string' ? rawKeymap.treeTab : defaultKeymap.treeTab,
       walkthroughTab:
-        typeof rawKeymap.walkthroughTab === 'string'
+        typeof rawKeymap.walkthroughTab === 'string' &&
+        rawKeymap.walkthroughTab !== oldDefaultWalkthroughTab
           ? rawKeymap.walkthroughTab
           : defaultKeymap.walkthroughTab,
     },

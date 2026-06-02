@@ -125,8 +125,8 @@
         },
         "walkthroughTab": {
           "type": "string",
-          "default": "Mod+2",
-          "description": "Open the Review Guide sidebar."
+          "default": "Mod+l",
+          "description": "Toggle the Review Guide sidebar."
         }
       }
     }
