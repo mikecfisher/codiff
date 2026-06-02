@@ -32,7 +32,7 @@
         },
         "openAIModel": {
           "type": "string",
-          "default": "gpt-5.3-codex-spark",
+          "default": "gpt-5.5",
           "description": "The OpenAI model to use for review assistance and walkthroughs."
         },
         "showOutdated": {
@@ -50,6 +50,11 @@
           "enum": ["system", "light", "dark"],
           "default": "system",
           "description": "Application color theme. 'system' follows OS preference."
+        },
+        "vimMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Vim-style keyboard navigation for review workflows."
         },
         "wordWrap": {
           "type": "boolean",
@@ -77,6 +82,11 @@
           "type": "string",
           "default": "Mod+p",
           "description": "Focus the file filter search input in the sidebar."
+        },
+        "historyTab": {
+          "type": "string",
+          "default": "Mod+3",
+          "description": "Open the source history picker."
         },
         "nextSearchMatch": {
           "type": "string",
@@ -107,6 +117,16 @@
           "type": "string",
           "default": "Mod+b",
           "description": "Toggle the sidebar between expanded and collapsed states."
+        },
+        "treeTab": {
+          "type": "string",
+          "default": "Mod+1",
+          "description": "Show the file tree sidebar."
+        },
+        "walkthroughTab": {
+          "type": "string",
+          "default": "Mod+2",
+          "description": "Open the Review Guide sidebar."
         }
       }
     }

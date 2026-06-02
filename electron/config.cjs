@@ -28,10 +28,11 @@ const defaultSettings = {
   copyCommentsOnClose: false,
   diffStyle: 'split',
   lastRepositoryPath: '',
-  openAIModel: 'gpt-5.3-codex-spark',
+  openAIModel: 'gpt-5.5',
   showOutdated: false,
   showWhitespace: false,
   theme: 'system',
+  vimMode: false,
   wordWrap: false,
 };
 
@@ -42,10 +43,13 @@ const defaultKeymap = {
   diffSearch: 'Mod+f',
   discardComment: 'Escape',
   fileFilter: 'Mod+p',
+  historyTab: 'Mod+3',
   nextSearchMatch: 'Enter',
   prevSearchMatch: 'Shift+Enter',
   submitComment: 'Mod+Enter',
   toggleSidebar: 'Mod+b',
+  treeTab: 'Mod+1',
+  walkthroughTab: 'Mod+2',
 };
 
 /** @type {CodiffConfig} */
@@ -177,6 +181,8 @@ const mergeConfig = (raw) => {
           : defaultKeymap.discardComment,
       fileFilter:
         typeof rawKeymap.fileFilter === 'string' ? rawKeymap.fileFilter : defaultKeymap.fileFilter,
+      historyTab:
+        typeof rawKeymap.historyTab === 'string' ? rawKeymap.historyTab : defaultKeymap.historyTab,
       nextSearchMatch:
         typeof rawKeymap.nextSearchMatch === 'string'
           ? rawKeymap.nextSearchMatch
@@ -193,6 +199,11 @@ const mergeConfig = (raw) => {
         typeof rawKeymap.toggleSidebar === 'string'
           ? rawKeymap.toggleSidebar
           : defaultKeymap.toggleSidebar,
+      treeTab: typeof rawKeymap.treeTab === 'string' ? rawKeymap.treeTab : defaultKeymap.treeTab,
+      walkthroughTab:
+        typeof rawKeymap.walkthroughTab === 'string'
+          ? rawKeymap.walkthroughTab
+          : defaultKeymap.walkthroughTab,
     },
     settings: {
       copyCommentsOnClose:
@@ -214,6 +225,8 @@ const mergeConfig = (raw) => {
           ? rawSettings.showWhitespace
           : defaultSettings.showWhitespace,
       theme: normalizeTheme(rawSettings.theme),
+      vimMode:
+        typeof rawSettings.vimMode === 'boolean' ? rawSettings.vimMode : defaultSettings.vimMode,
       wordWrap:
         typeof rawSettings.wordWrap === 'boolean' ? rawSettings.wordWrap : defaultSettings.wordWrap,
     },

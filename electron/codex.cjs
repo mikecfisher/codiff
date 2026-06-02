@@ -6,8 +6,8 @@ const { tmpdir } = require('node:os');
 const { delimiter, join } = require('node:path');
 
 const CODEX_TIMEOUT_MS = 45_000;
-const DEFAULT_OPENAI_MODEL = 'gpt-5.3-codex-spark';
-const FALLBACK_OPENAI_MODEL = 'gpt-5.3-codex';
+const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
+const FALLBACK_OPENAI_MODEL = 'gpt-5.4-mini';
 const CODEX_REASONING_EFFORT = 'high';
 const CODEX_MACOS_BLOCKED_MESSAGE =
   'macOS blocked the local Codex CLI. Update Codex CLI from the official OpenAI release, then run `codex --version` and try again.';
@@ -31,15 +31,15 @@ const CODEX_NOT_FOUND_MESSAGE =
 const OPENAI_MODELS = Object.freeze([
   {
     id: DEFAULT_OPENAI_MODEL,
-    label: 'Best: GPT-5.3 Codex Spark',
+    label: 'Best: GPT-5.5',
   },
   {
     id: FALLBACK_OPENAI_MODEL,
-    label: 'Reliable: GPT-5.3 Codex',
+    label: 'Fast: GPT-5.4 Mini',
   },
   {
-    id: 'gpt-5.5',
-    label: 'Latest: GPT-5.5',
+    id: 'gpt-5.3-codex-spark',
+    label: 'Preview: GPT-5.3 Codex Spark',
   },
 ]);
 const OPENAI_MODEL_IDS = new Set(OPENAI_MODELS.map((model) => model.id));

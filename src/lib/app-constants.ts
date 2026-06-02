@@ -27,9 +27,10 @@ export const defaultPreferences: CodiffPreferences = {
   copyCommentsOnClose: false,
   diffStyle: 'split',
   lastRepositoryPath: '',
-  openAIModel: 'gpt-5.3-codex-spark',
+  openAIModel: 'gpt-5.5',
   showOutdated: false,
   showWhitespace: false,
   theme: 'system',
+  vimMode: false,
   wordWrap: false,
 };

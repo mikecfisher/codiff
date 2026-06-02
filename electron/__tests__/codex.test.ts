@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vite-plus/test';
+import { expect, test, vi } from 'vite-plus/test';
 
 const require = createRequire(import.meta.url);
 const {
@@ -28,12 +28,19 @@ const {
     schema: unknown,
     outputName?: string,
     timeoutMessage?: string,
-    options?: { model?: string },
+    options?: {
+      fallbackModel?: string;
+      model?: string;
+      onModelFallback?: (fallbackModel: string, originalModel: string) => Promise<void> | void;
+    },
   ) => Promise<string>;
 };
 
 test('normalizes OpenAI model preferences to known models', () => {
-  expect(normalizeOpenAIModel('gpt-5.3-codex')).toBe('gpt-5.3-codex');
+  expect(normalizeOpenAIModel('gpt-5.5')).toBe('gpt-5.5');
+  expect(normalizeOpenAIModel('gpt-5.4-mini')).toBe('gpt-5.4-mini');
+  expect(normalizeOpenAIModel('gpt-5.3-codex-spark')).toBe('gpt-5.3-codex-spark');
+  expect(normalizeOpenAIModel('gpt-5.3-codex')).toBe(DEFAULT_OPENAI_MODEL);
   expect(normalizeOpenAIModel('gpt-4o')).toBe(DEFAULT_OPENAI_MODEL);
 });
 
@@ -100,6 +107,61 @@ test('rejects invalid explicit Codex CLI overrides', () => {
     } else {
       process.env.CODIFF_CODEX_PATH = previousCodexPath;
     }
+  }
+});
+
+test('falls back to the ChatGPT-compatible mini model when the selected model is unavailable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codiff-codex-'));
+  const fakeCodexPath = join(directory, 'codex');
+  const modelsPath = join(directory, 'models.txt');
+  const previousCodexPath = process.env.CODIFF_CODEX_PATH;
+  const fallbackMock = vi.fn();
+
+  try {
+    await writeFile(
+      fakeCodexPath,
+      `#!/bin/sh
+model=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-m" ]; then
+    shift
+    model="$1"
+  fi
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    output_path="$1"
+  fi
+  shift
+done
+printf '%s\\n' "$model" >> "${modelsPath}"
+if [ "$model" = "gpt-5.5" ]; then
+  printf 'The '\''gpt-5.5'\'' model is not supported when using Codex with a ChatGPT account.' >&2
+  exit 1
+fi
+printf '{"version":1}' > "$output_path"
+`,
+    );
+    await chmod(fakeCodexPath, 0o755);
+    process.env.CODIFF_CODEX_PATH = fakeCodexPath;
+
+    await expect(
+      runCodex('/repo', 'prompt', {}, 'fallback.json', 'Timed out.', {
+        onModelFallback: fallbackMock,
+      }),
+    ).resolves.toBe('{"version":1}');
+
+    expect((await readFile(modelsPath, 'utf8')).trim().split('\n')).toEqual([
+      'gpt-5.5',
+      'gpt-5.4-mini',
+    ]);
+    expect(fallbackMock).toHaveBeenCalledWith('gpt-5.4-mini', 'gpt-5.5');
+  } finally {
+    if (previousCodexPath == null) {
+      delete process.env.CODIFF_CODEX_PATH;
+    } else {
+      process.env.CODIFF_CODEX_PATH = previousCodexPath;
+    }
+    await rm(directory, { force: true, recursive: true });
   }
 });
 

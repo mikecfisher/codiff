@@ -239,6 +239,7 @@ export type CodiffPreferences = {
   showOutdated: boolean;
   showWhitespace: boolean;
   theme: CodiffTheme;
+  vimMode: boolean;
   wordWrap: boolean;
 };
 

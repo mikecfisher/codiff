@@ -9,6 +9,7 @@ export type CodiffSettings = {
   showOutdated: boolean;
   showWhitespace: boolean;
   theme: CodiffTheme;
+  vimMode: boolean;
   wordWrap: boolean;
 };
 
@@ -20,10 +21,13 @@ export type CodiffKeymap = {
   diffSearch: KeyCombo;
   discardComment: KeyCombo;
   fileFilter: KeyCombo;
+  historyTab: KeyCombo;
   nextSearchMatch: KeyCombo;
   prevSearchMatch: KeyCombo;
   submitComment: KeyCombo;
   toggleSidebar: KeyCombo;
+  treeTab: KeyCombo;
+  walkthroughTab: KeyCombo;
 };
 
 export type CodiffConfig = {
