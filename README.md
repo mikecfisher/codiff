@@ -66,7 +66,7 @@ The command bar includes actions for common review workflows:
 
 - Focus File Filter
 - Find in Diffs
-- Show File Tree, Show History, and Show Walkthrough
+- Show File Tree, Show History, and Show Review Guide
 - Copy Review Comments
 - Copy Review Comments and Close
 - Toggle Viewed for the currently selected file
@@ -89,21 +89,25 @@ is running so changes apply to open windows.
     "copyCommentsOnClose": false,
     "diffStyle": "split",
     "lastRepositoryPath": "",
-    "openAIModel": "gpt-5.3-codex-spark",
+    "openAIModel": "gpt-5.5",
     "showWhitespace": false,
     "theme": "system",
+    "vimMode": false,
     "wordWrap": false,
   },
   "keymap": {
     "commandBar": "Mod+Shift+p",
     "diffSearch": "Mod+f",
     "fileFilter": "Mod+p",
+    "historyTab": "Mod+3",
     "nextSearchMatch": "Enter",
     "prevSearchMatch": "Shift+Enter",
     "closeSearch": "Escape",
     "submitComment": "Mod+Enter",
     "discardComment": "Escape",
     "toggleSidebar": "Mod+b",
+    "treeTab": "Mod+1",
+    "walkthroughTab": "Mod+2",
   },
 }
 ```
@@ -111,7 +115,11 @@ is running so changes apply to open windows.
 Choose `View > Split Diff` or `View > Unified Diff`, use Toggle Diff Layout in the command bar,
 or set `settings.diffStyle` to `split` for side-by-side diffs or `unified` for unified diffs.
 Choose `View > Word Wrap`, use Toggle Word Wrap in the command bar, or set `settings.wordWrap`
-to `true` to wrap long diff lines.
+to `true` to wrap long diff lines. Set `settings.vimMode` to `true` to enable Vim-style
+review navigation, including `j`/`k` for line movement, <kbd>Ctrl</kbd>+<kbd>D</kbd>/<kbd>Ctrl</kbd>+<kbd>U</kbd> for half-page scrolling, `gg`/`G` for first/last file, `/` for diff
+search, `p` for file filter, `b` for sidebar, `v` for viewed, `w` for word wrap, and `:` for the
+command bar. Vim mode also disables <kbd>Tab</kbd>/<kbd>Shift</kbd>+<kbd>Tab</kbd> focus navigation
+outside text inputs so review navigation stays shortcut-driven.
 Use `Mod` for <kbd>Cmd</kbd> on macOS and <kbd>Ctrl</kbd> on other platforms. Shortcut strings can
 combine `Mod`, `Ctrl`, `Alt`, `Shift`, or `Meta` with a key, for example `Mod+Shift+p` or
 `Alt+Enter`.

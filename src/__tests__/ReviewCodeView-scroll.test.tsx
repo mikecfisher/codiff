@@ -92,7 +92,10 @@ vi.mock('@pierre/diffs/react', async () => {
   };
 });
 
-const createChangedFile = (path: string) =>
+const createChangedFile = (
+  path: string,
+  patch = `diff --git a/${path} b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+) =>
   ({
     fingerprint: `${path}:1`,
     path,
@@ -101,7 +104,7 @@ const createChangedFile = (path: string) =>
         binary: false,
         id: `${path}:unstaged`,
         kind: 'unstaged',
-        patch: `diff --git a/${path} b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+        patch,
       },
     ],
     status: 'modified',
@@ -126,6 +129,78 @@ const waitFor = async (assertion: () => void) => {
 
   throw lastError;
 };
+
+test('vim j moves the diff line cursor instead of selecting the next file', async () => {
+  const patch = `diff --git a/src/first.ts b/src/first.ts\n@@ -1,3 +1,3 @@\n context\n-old\n+new\n tail\n`;
+  const onSelectPath = vi.fn();
+  codeViewMock.scrollTo.mockClear();
+
+  const container = document.createElement('div');
+  document.body.append(container);
+  let root: Root | null = null;
+
+  try {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <ReviewCodeView
+          activeSearchMatch={null}
+          collapsed={new Set()}
+          comments={[]}
+          diffStyle="split"
+          files={[createChangedFile('src/first.ts', patch), createChangedFile('src/second.ts')]}
+          focusCommentId={null}
+          focusCommentRequest={0}
+          forceExpandedPaths={new Set()}
+          gitIdentity={null}
+          isPullRequest={false}
+          itemVersionByPath={{}}
+          keymap={defaultKeymap}
+          loadingSectionIds={new Set()}
+          onAskCodex={() => {}}
+          onCreateComment={() => {}}
+          onDeleteComment={() => {}}
+          onLoadSection={() => {}}
+          onOpenFile={() => {}}
+          onSelectPath={onSelectPath}
+          onSelectPathFromScroll={() => {}}
+          onSubmitComment={() => {}}
+          onToggleCollapsed={() => {}}
+          onToggleViewed={() => {}}
+          onUpdateComment={() => {}}
+          scrollTarget={null}
+          searchQuery=""
+          selectedPath="src/first.ts"
+          showWhitespace={false}
+          source={source}
+          viewed={{}}
+          vimEnabled
+          walkthroughNotes={new Map()}
+          wordWrap={false}
+        />,
+      );
+    });
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'j' }));
+    });
+
+    expect(onSelectPath).toHaveBeenLastCalledWith('src/first.ts');
+    expect(codeViewMock.scrollTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: 'diff:src/first.ts:unstaged',
+        lineNumber: 2,
+        side: 'additions',
+        type: 'line',
+      }),
+    );
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    container.remove();
+  }
+});
 
 test('reload scroll target is retried until the selected item renders', async () => {
   codeViewMock.scrollTo.mockClear();
@@ -157,6 +232,7 @@ test('reload scroll target is retried until the selected item renders', async ()
           onDeleteComment={() => {}}
           onLoadSection={() => {}}
           onOpenFile={() => {}}
+          onSelectPath={() => {}}
           onSelectPathFromScroll={() => {}}
           onSubmitComment={() => {}}
           onToggleCollapsed={() => {}}
@@ -168,6 +244,7 @@ test('reload scroll target is retried until the selected item renders', async ()
           showWhitespace={false}
           source={source}
           viewed={{}}
+          vimEnabled={false}
           walkthroughNotes={new Map()}
           wordWrap={false}
         />,

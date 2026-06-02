@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, test } from 'vite-plus/test';
+import { defaultKeymap } from '../config/defaults.ts';
+import { getShortcutLabel, matchesShortcut } from '../config/keymap.ts';
 import { getDiffSearchResult } from '../lib/diff-search.ts';
 import {
   canRenderImagePreview,
@@ -10,6 +12,7 @@ import {
   fileHasVisibleDiff,
   shouldLoadDiffSectionContents,
 } from '../lib/diff.ts';
+import { getHistoryNavigationSources, getHistoryRows } from '../lib/history.ts';
 import { isDiffSearchShortcut } from '../lib/keyboard.ts';
 import { renderMarkdown } from '../lib/markdown.tsx';
 import {
@@ -442,6 +445,49 @@ test('rendered markdown marks blocks intersecting added source lines', () => {
   expect(html).toContain('<blockquote class="codiff-markdown-added">');
   expect(html).toContain('<hr class="codiff-markdown-added"/>');
   expect(html).toContain('<div class="codiff-markdown-code-added codiff-markdown-added"><pre>');
+});
+
+test('history navigation sources follow visible history rows', () => {
+  const sources = getHistoryNavigationSources(
+    getHistoryRows({
+      branchSource: null,
+      entries: [
+        {
+          author: 'A',
+          committedAt: 1,
+          parents: [],
+          ref: 'abc123',
+          subject: 'First commit',
+        },
+        {
+          author: 'B',
+          committedAt: 2,
+          parents: [],
+          ref: 'def456',
+          subject: 'Second commit',
+        },
+      ],
+      pullRequestSource: null,
+      searchQuery: '',
+    }),
+  );
+
+  expect(sources).toEqual([
+    { type: 'working-tree' },
+    { ref: 'abc123', type: 'commit' },
+    { ref: 'def456', type: 'commit' },
+  ]);
+});
+
+test('keymap shortcuts use TanStack hotkey matching and labels', () => {
+  expect(
+    matchesShortcut(
+      { altKey: false, ctrlKey: false, key: 'p', metaKey: true, shiftKey: true },
+      defaultKeymap,
+      'commandBar',
+    ),
+  ).toBe(true);
+  expect(getShortcutLabel(defaultKeymap, 'commandBar')).toContain('P');
 });
 
 test('diff search shortcut does not claim fullscreen shortcut', () => {

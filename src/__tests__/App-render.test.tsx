@@ -139,6 +139,7 @@ const createCodiffMock = (overrides: Partial<Window['codiff']> = {}): Window['co
     showOutdated: false,
     showWhitespace: false,
     theme: 'system' as const,
+    vimMode: false,
     wordWrap: false,
   })),
   getRepositoryHistory: vi.fn(async () => ({
@@ -406,7 +407,165 @@ test('repository changes show the update banner without refreshing the working t
   }
 });
 
-test('walkthrough launch errors stay on the walkthrough tab without automatic retries', async () => {
+test('vim mode uses Control+D and Control+U for half-page diff scrolling', async () => {
+  const changedFile = createChangedFile('src/app.ts');
+  const scrollBy = vi.fn();
+  const originalScrollBy = HTMLElement.prototype.scrollBy;
+  const originalClientHeight = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'clientHeight',
+  );
+
+  Object.defineProperty(HTMLElement.prototype, 'scrollBy', {
+    configurable: true,
+    value: scrollBy,
+  });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get() {
+      return 'classList' in this && this.classList.contains('code-view') ? 800 : 0;
+    },
+  });
+
+  window.codiff = createCodiffMock({
+    getConfig: vi.fn(async () => ({
+      ...defaultConfig,
+      settings: { ...defaultConfig.settings, vimMode: true },
+    })),
+    getRepositoryState: vi.fn(async () => ({
+      ...repositoryState,
+      files: [changedFile],
+    })),
+  });
+
+  const container = document.createElement('div');
+  document.body.append(container);
+  let root: Root | null = null;
+
+  try {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.code-view')).not.toBeNull();
+    });
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, ctrlKey: true, key: 'd' }),
+      );
+    });
+    expect(scrollBy).toHaveBeenLastCalledWith({ behavior: 'smooth', top: 400 });
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, ctrlKey: true, key: 'u' }),
+      );
+    });
+    expect(scrollBy).toHaveBeenLastCalledWith({ behavior: 'smooth', top: -400 });
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    if (originalScrollBy) {
+      HTMLElement.prototype.scrollBy = originalScrollBy;
+    } else {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollBy;
+    }
+    if (originalClientHeight) {
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', originalClientHeight);
+    } else {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
+    }
+    container.remove();
+  }
+});
+
+test('source picker renders history in an unclipped portal and switches source', async () => {
+  const changedFile = createChangedFile('src/app.ts');
+  const historyEntries = [
+    {
+      author: 'Reviewer',
+      committedAt: Date.now(),
+      parents: [],
+      ref: '1111111',
+      subject: 'first long commit subject that should not collapse',
+    },
+    {
+      author: 'Reviewer',
+      committedAt: Date.now(),
+      parents: [],
+      ref: '2222222',
+      subject: 'second long commit subject that should remain readable',
+    },
+  ];
+  const getRepositoryState = vi.fn(async (source?: ReviewSource) => ({
+    ...repositoryState,
+    files: [changedFile],
+    source: source ?? repositoryState.source,
+  }));
+
+  window.codiff = createCodiffMock({
+    getRepositoryHistory: vi.fn(async () => ({
+      entries: historyEntries,
+      root: '/repo',
+    })),
+    getRepositoryState,
+  });
+
+  const container = document.createElement('div');
+  document.body.append(container);
+  let root: Root | null = null;
+
+  try {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.review-source-trigger')).not.toBeNull();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.review-source-trigger')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor(() => {
+      const popover = document.body.querySelector<HTMLElement>('.review-source-popover');
+      expect(popover).not.toBeNull();
+      expect(container.querySelector('.review-source-popover')).toBeNull();
+      expect(popover?.style.position).toBe('');
+      expect(popover?.style.width).toBe('360px');
+      expect(popover?.textContent).toContain('second long commit subject');
+    });
+
+    const secondCommit = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('.review-source-popover .history-entry'),
+    ).find((button) => button.textContent?.includes('2222222'));
+    expect(secondCommit).not.toBeUndefined();
+
+    await act(async () => {
+      secondCommit?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor(() => {
+      expect(getRepositoryState).toHaveBeenLastCalledWith({ ref: '2222222', type: 'commit' });
+    });
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    document.body.querySelector('.review-source-popover')?.remove();
+    container.remove();
+  }
+});
+
+test('walkthrough launch errors stay in the review guide without replacing the file tree', async () => {
   const changedFile = {
     fingerprint: 'src/app.ts:1',
     path: 'src/app.ts',
@@ -441,11 +600,6 @@ test('walkthrough launch errors stay on the walkthrough tab without automatic re
   document.body.append(container);
   let root: Root | null = null;
 
-  const getTab = (label: string) =>
-    Array.from(container.querySelectorAll('button[role="tab"]')).find((button) =>
-      button.textContent?.includes(label),
-    ) as HTMLButtonElement | undefined;
-
   try {
     await act(async () => {
       root = createRoot(container);
@@ -456,22 +610,10 @@ test('walkthrough launch errors stay on the walkthrough tab without automatic re
       expect(container.textContent).toContain('Walkthrough unavailable');
     });
 
-    expect(getTab('Walkthrough')?.getAttribute('aria-selected')).toBe('true');
-    expect(container.querySelector('.sidebar-walkthrough-status')).not.toBeNull();
-    expect(container.querySelector('.sidebar .file-tree-shell')).toBeNull();
-    expect(getWalkthrough).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      getTab('Tree')?.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    await act(async () => {
-      getTab('Walkthrough')?.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(container.textContent).toContain('Walkthrough unavailable');
-    expect(container.querySelector('.sidebar .file-tree-shell')).toBeNull();
+    expect(container.querySelector('.review-guide-sidebar')).not.toBeNull();
+    expect(container.querySelector('.review-guide-status')).not.toBeNull();
+    expect(container.querySelector('.sidebar .file-tree-shell')).not.toBeNull();
+    expect(container.querySelectorAll('button[role="tab"]')).toHaveLength(0);
     expect(getWalkthrough).toHaveBeenCalledTimes(1);
   } finally {
     if (root) {
