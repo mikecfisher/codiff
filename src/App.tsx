@@ -1607,6 +1607,7 @@ export default function App() {
     timeout: 800,
   };
   const vimSourcePickerHotkeyOptions = {
+    conflictBehavior: 'allow' as const,
     enabled: vimEnabled && sourcePickerOpen,
     ignoreInputs: true,
   };

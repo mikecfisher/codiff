@@ -913,10 +913,6 @@ function ReviewCodeViewInner(
     return map;
   }, [comments]);
 
-  useEffect(() => {
-    selectedLinesRef.current = selectedLines;
-  }, [selectedLines]);
-
   const markMarkdownPreviewLayoutReady = useCallback((sectionId: string) => {
     setMarkdownPreviewLayoutPassBySection((current) => ({
       ...current,
@@ -1366,7 +1362,11 @@ function ReviewCodeViewInner(
     vimCountRef.current += key;
   }, []);
 
-  const vimHotkeyOptions = { enabled: vimEnabled, ignoreInputs: true };
+  const vimHotkeyOptions = {
+    conflictBehavior: 'allow' as const,
+    enabled: vimEnabled,
+    ignoreInputs: true,
+  };
   useHotkey(toRegisterableHotkey('0'), recordVimCount, vimHotkeyOptions);
   useHotkey(toRegisterableHotkey('1'), recordVimCount, vimHotkeyOptions);
   useHotkey(toRegisterableHotkey('2'), recordVimCount, vimHotkeyOptions);

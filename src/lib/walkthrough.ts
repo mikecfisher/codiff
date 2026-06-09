@@ -1,8 +1,6 @@
 import type { ChangedFile, Walkthrough } from '../types.ts';
 import type { WalkthroughNote } from './app-types.ts';
 
-export const emptyWalkthroughNotes = new Map<string, WalkthroughNote>();
-
 export const walkthroughActionLabel: Record<WalkthroughNote['action'], string> = {
   review: 'Review',
   scan: 'Scan',
