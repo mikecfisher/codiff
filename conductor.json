@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "setup": "vp install",
+    "run": "vp dev --host 127.0.0.1 --port ${CONDUCTOR_PORT:-5173} --strictPort",
+    "archive": "true"
+  },
+  "runScriptMode": "concurrent"
+}
