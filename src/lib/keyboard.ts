@@ -1,15 +1,3 @@
-type NativeInputEventTarget = EventTarget & {
-  closest?: (selector: string) => Element | null;
-  isContentEditable?: boolean;
-};
-
-export const isNativeInputTarget = (target: EventTarget | null) => {
-  const candidate = target as NativeInputEventTarget | null;
-  return (
-    candidate?.closest?.('input, select, textarea') != null || candidate?.isContentEditable === true
-  );
-};
-
 export const isMacPlatform = (platform = navigator.platform) =>
   platform.toLowerCase().includes('mac');
 
